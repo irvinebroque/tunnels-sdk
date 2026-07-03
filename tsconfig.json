@@ -12,7 +12,8 @@
     "paths": {
       "tunnels": ["packages/tunnels/src/index.ts"],
       "tunnels/effect": ["packages/tunnels/src/effect/index.ts"],
-      "tunnels/bin": ["packages/tunnels/src/bin/index.ts"]
+      "tunnels/bin": ["packages/tunnels/src/bin/index.ts"],
+      "tunnels/vite": ["packages/tunnels/src/vite.ts"]
     },
     "declaration": true,
     "declarationMap": true,

@@ -25,6 +25,7 @@ import type {
   TunnelListOptions,
   DeleteOptions,
   CloudflareAuthService,
+  ExposeOptions,
 } from "./effect/index.js";
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,8 @@ export type {
   ConnectorInfo,
   LogEntry,
 } from "./effect/index.js";
+
+export type { ExposeOptions } from "./effect/index.js";
 
 // Re-export config validation
 /**
@@ -540,19 +543,24 @@ export interface ExposedTunnel {
   [Symbol.asyncDispose](): Promise<void>;
 }
 
+interface ExposeRuntimeOptions extends ExposeOptions {
+  readonly _binaryLayer?: Layer.Layer<CloudflaredBinary>;
+}
+
 /**
  * Quick-exposes a local port via an anonymous Cloudflare tunnel.
  *
  * Call `.close()` or use `await using` on the returned handle to shut down the tunnel. Optionally
- * pass a custom binary layer for testing.
+ * pass options to control local host, readiness timeout, readiness checks, and log forwarding.
  *
  * @param port Local port to expose through trycloudflare.
- * @param options Optional test hooks for overriding the cloudflared binary layer.
+ * @param options Optional quick tunnel configuration.
  * @returns A Promise resolving to the exposed tunnel handle.
  */
+export function expose(port: number, options?: ExposeOptions): Promise<ExposedTunnel>;
 export async function expose(
   port: number,
-  options?: { _binaryLayer?: Layer.Layer<CloudflaredBinary>; },
+  options?: ExposeRuntimeOptions,
 ): Promise<ExposedTunnel> {
   const binaryLayer = options?._binaryLayer ?? CloudflaredBinary.layer;
   const runtime = ManagedRuntime.make(binaryLayer);
@@ -560,18 +568,28 @@ export async function expose(
   // Create a scope we control — keeps the tunnel process alive until close()
   const scope = Effect.runSync(Scope.make());
 
-  const result = await runtime.runPromise(
-    exposeEffect(port).pipe(
-      Effect.provideService(Scope.Scope, scope),
-    ),
-  );
-
+  let cleanupPromise: Promise<void> | undefined;
   const cleanup = async () => {
-    // Close scope first — triggers SIGTERM finalizer on the tunnel process
-    await Effect.runPromise(Scope.close(scope, Exit.void));
-    // Then dispose the runtime
-    await runtime.dispose();
+    cleanupPromise ??= (async () => {
+      // Close scope first — triggers SIGTERM finalizer on the tunnel process
+      await Effect.runPromise(Scope.close(scope, Exit.void));
+      // Then dispose the runtime
+      await runtime.dispose();
+    })();
+    await cleanupPromise;
   };
+
+  let result: { readonly url: string };
+  try {
+    result = await runtime.runPromise(
+      exposeEffect(port, options).pipe(
+        Effect.provideService(Scope.Scope, scope),
+      ),
+    );
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
 
   return {
     url: result.url,
