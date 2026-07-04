@@ -10,6 +10,18 @@ Handles API calls, binary management, process lifecycle, streaming logs, and cle
 npm install tunnels
 ```
 
+### From a Git branch or fork
+
+```json
+{
+  "dependencies": {
+    "tunnels": "github:irvinebroque/tunnels-sdk#feat/tunnels-vite-plugin"
+  }
+}
+```
+
+The repository root exposes this package for git installs and builds `packages/tunnels` during the install prepare step.
+
 ## Quick start
 
 ### One-liner expose
