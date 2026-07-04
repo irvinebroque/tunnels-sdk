@@ -15,6 +15,10 @@
     "./bin": {
       "types": "./dist/bin/index.d.ts",
       "import": "./dist/bin/index.js"
+    },
+    "./vite": {
+      "types": "./dist/vite.d.ts",
+      "import": "./dist/vite.js"
     }
   },
   "main": "./dist/index.js",

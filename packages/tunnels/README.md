@@ -10,6 +10,18 @@ Handles API calls, binary management, process lifecycle, streaming logs, and cle
 npm install tunnels
 ```
 
+### From a Git branch or fork
+
+```json
+{
+  "dependencies": {
+    "tunnels": "github:irvinebroque/tunnels-sdk#feat/tunnels-vite-plugin"
+  }
+}
+```
+
+The repository root exposes this package for git installs and builds `packages/tunnels` during the install prepare step.
+
 ## Quick start
 
 ### One-liner expose
@@ -25,6 +37,47 @@ console.log(tunnel.url) // https://abc123.trycloudflare.com
 const tunnel = await expose(3000)
 await tunnel.close()
 ```
+
+### Vite dev-server tunnel
+
+```ts
+import { defineConfig } from "vite"
+import { viteTunnel } from "tunnels/vite"
+
+export default defineConfig({
+  plugins: [
+    viteTunnel({
+      port: 3000,
+      env: "PUBLIC_DEV_SERVER_URL",
+      onReady: ({ url }) => {
+        console.log(`Tunnel ready: ${url}`)
+      },
+    }),
+  ],
+})
+```
+
+### Vitest Browser Mode
+
+`viteTunnel` is generic. Vitest Browser Mode can consume it by publishing the generated URL to the env var your browser provider already reads.
+
+```ts
+import { defineConfig } from "vitest/config"
+import { viteTunnel } from "tunnels/vite"
+
+export default defineConfig({
+  plugins: [
+    viteTunnel({
+      port: 63315,
+      env: "VITEST_BROWSER_PUBLIC_ORIGIN",
+    }),
+  ],
+})
+```
+
+> Security: quick tunnels expose your local dev server on a public `trycloudflare.com` URL. Only tunnel services you are comfortable making reachable from the Internet.
+
+Cloudflare's official Vite plugin also supports local dev tunnels. Use this SDK plugin when you need programmatic access to the generated URL, callback hooks, or env publishing from `tunnels`.
 
 ### Full API access
 
@@ -63,11 +116,50 @@ const tunnel = await expose(3000)
 tunnel.url   // https://abc123.trycloudflare.com
 await tunnel.close()
 
-// With a custom binary
-await expose(3000, { binaryPath: "/usr/local/bin/cloudflared" })
+const tunnel = await expose(63315, {
+  host: "127.0.0.1",
+  timeoutMs: 45_000,
+  waitForRegisteredConnection: true,
+  logTo: process.stderr,
+})
 ```
 
-Returns a `QuickTunnel` with `url`, `close()`, and `[Symbol.asyncDispose]()`.
+Options:
+
+- `host`: local host/IP to expose. Defaults to `127.0.0.1`.
+- `timeoutMs`: startup readiness timeout. Defaults to `45_000`.
+- `waitForRegisteredConnection`: wait for a registered edge connection before resolving. Defaults to `true`.
+- `logTo`: writable stream that receives raw `cloudflared` stdout/stderr chunks.
+
+Returns an `ExposedTunnel` with `url`, `close()`, and `[Symbol.asyncDispose]()`.
+
+### `viteTunnel(options?)`
+
+Starts an anonymous quick tunnel for a Vite dev server and closes it with the server lifecycle.
+
+```ts
+import { viteTunnel } from "tunnels/vite"
+
+viteTunnel({
+  port: ({ server }) => server.config.server.port ?? 63315,
+  host: "127.0.0.1",
+  env: ["PUBLIC_DEV_SERVER_URL", "VITEST_BROWSER_PUBLIC_ORIGIN"],
+  existingOrigin: process.env.VITEST_BROWSER_PUBLIC_ORIGIN,
+  onReady: ({ url }) => {
+    console.log(`Tunnel ready: ${url}`)
+  },
+})
+```
+
+Options extend `ExposeOptions` and add:
+
+- `enabled`: set `false` to no-op.
+- `autoStart`: set `false` to prevent starting a tunnel. Defaults to `true`.
+- `port`: local port or callback. Defaults to `server.config.server.port`.
+- `env`: env var name, list of names, or `false` to disable env publishing.
+- `existingOrigin`: publish and report an already-known origin instead of starting a tunnel.
+- `onReady`: callback after a URL is available.
+- `onClose`: callback after a started tunnel is closed.
 
 ### `TunnelClient`
 
@@ -302,12 +394,7 @@ await cloudflared.update()   // latest from GitHub releases
 await cloudflared.remove()
 ```
 
-Skip auto-download by passing `binaryPath`:
-
-```ts
-new TunnelClient({ accountId: "...", apiToken: "...", binaryPath: "/usr/local/bin/cloudflared" })
-await expose(3000, { binaryPath: "/usr/local/bin/cloudflared" })
-```
+Quick tunnels use this managed cached binary automatically. Use `tunnels/bin` if you need to preinstall, update, or remove the cached `cloudflared` binary outside the `expose()` lifecycle.
 
 ---
 

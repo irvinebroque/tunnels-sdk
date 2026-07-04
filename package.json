@@ -1,11 +1,50 @@
 {
   "name": "tunnels-monorepo",
+  "version": "0.1.0",
   "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "exports": {
+    ".": {
+      "types": "./packages/tunnels/dist/index.d.ts",
+      "import": "./packages/tunnels/dist/index.js"
+    },
+    "./effect": {
+      "types": "./packages/tunnels/dist/effect/index.d.ts",
+      "import": "./packages/tunnels/dist/effect/index.js"
+    },
+    "./bin": {
+      "types": "./packages/tunnels/dist/bin/index.d.ts",
+      "import": "./packages/tunnels/dist/bin/index.js"
+    },
+    "./vite": {
+      "types": "./packages/tunnels/dist/vite.d.ts",
+      "import": "./packages/tunnels/dist/vite.js"
+    }
+  },
+  "main": "./packages/tunnels/dist/index.js",
+  "module": "./packages/tunnels/dist/index.js",
+  "types": "./packages/tunnels/dist/index.d.ts",
+  "files": [
+    "packages/tunnels/dist"
+  ],
   "scripts": {
     "start": "node scripts/serve-learning-site.mjs",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "clean": "node scripts/clean-generated.mjs && pnpm -r clean"
+    "clean": "node scripts/clean-generated.mjs && pnpm -r clean",
+    "prepare": "node scripts/prepare-git-dependency.mjs"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.0-beta.42",
+    "effect": "4.0.0-beta.42",
+    "yaml": "^2.7.1"
+  },
+  "devDependencies": {
+    "tsdown": "^0.21.7",
+    "typescript": "^5.8.2"
   }
 }

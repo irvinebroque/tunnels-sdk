@@ -19,6 +19,7 @@ export type {
   AuthTokenSet,
   CloudflareAuthProvider,
   TunnelClientOptions,
+  ExposeOptions,
   ExposedTunnel,
 } from "./wrapper.js"
 

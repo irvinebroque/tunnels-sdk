@@ -119,6 +119,7 @@ export type { StderrStreams } from "./services/parse-stderr.js"
  * Anonymous quick tunnel Effect helper.
  */
 export { expose } from "./expose.js"
+export type { ExposeOptions } from "./expose.js"
 
 // ─── Config ───
 /**
