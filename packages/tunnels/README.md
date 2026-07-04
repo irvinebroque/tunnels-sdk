@@ -22,6 +22,33 @@ npm install tunnels
 
 The repository root exposes this package for git installs and builds `packages/tunnels` during the install prepare step.
 
+## What This PR Adds
+
+This package now owns the generic quick-tunnel lifecycle for local development tools and test runners.
+
+- Start an anonymous Cloudflare quick tunnel from TypeScript with `expose(port, options)`.
+- Read the generated public `https://*.trycloudflare.com` URL programmatically.
+- Choose the local host used for the origin URL, defaulting to `127.0.0.1`.
+- Wait for both URL discovery and registered edge connection readiness before returning.
+- Fail startup with a timeout and cleanly terminate `cloudflared` if readiness never happens.
+- Forward raw `cloudflared` stdout and stderr to any writable stream.
+- Use `tunnels/vite` to bind a quick tunnel to Vite dev-server startup and shutdown.
+- Publish the generated URL to one or more environment variables without hardcoding Browser Run or Vitest concepts into the SDK.
+- Install the fork or branch directly from git while still importing `tunnels` and `tunnels/vite` from another project.
+
+This package intentionally stays generic. Browser Run, Vitest Browser Mode, Playwright, or any other remote browser tool can consume the URL, but this SDK does not own Browser Run credentials, provider behavior, browser-specific rewriting, or a hardcoded `VITEST_BROWSER_PUBLIC_ORIGIN` concept.
+
+## Public Entrypoints
+
+| Import | Purpose |
+|--------|---------|
+| `tunnels` | High-level SDK exports, including `expose`, `TunnelClient`, `ExposeOptions`, and `ExposedTunnel`. |
+| `tunnels/vite` | Vite-compatible quick-tunnel plugin, including `viteTunnel` and Vite plugin option/context types. |
+| `tunnels/effect` | Effect-native SDK exports for consumers already using Effect. |
+| `tunnels/bin` | Managed `cloudflared` binary resolver and installer. |
+
+The git-dependency facade at the repository root forwards these entrypoints to `packages/tunnels/dist` after the install `prepare` step builds the package.
+
 ## Quick start
 
 ### One-liner expose
@@ -57,6 +84,8 @@ export default defineConfig({
 })
 ```
 
+`viteTunnel()` starts with the Vite dev server by default, publishes the generated URL to `process.env.PUBLIC_DEV_SERVER_URL`, calls `onReady`, and closes the tunnel when Vite shuts down.
+
 ### Vitest Browser Mode
 
 `viteTunnel` is generic. Vitest Browser Mode can consume it by publishing the generated URL to the env var your browser provider already reads.
@@ -74,6 +103,8 @@ export default defineConfig({
   ],
 })
 ```
+
+This is only an example consumer. `env` can be any variable name or list of names that your app, runner, or provider reads.
 
 > Security: quick tunnels expose your local dev server on a public `trycloudflare.com` URL. Only tunnel services you are comfortable making reachable from the Internet.
 
@@ -111,11 +142,39 @@ await proc.waitUntilHealthy()
 
 Creates an anonymous quick tunnel. No auth required.
 
+Public API:
+
+```ts
+import { expose } from "tunnels"
+import type { ExposedTunnel, ExposeOptions } from "tunnels"
+
+export interface ExposeOptions {
+  host?: string
+  timeoutMs?: number
+  waitForRegisteredConnection?: boolean
+  logTo?: NodeJS.WritableStream
+}
+
+export interface ExposedTunnel {
+  readonly url: string
+  close(): Promise<void>
+  [Symbol.asyncDispose](): Promise<void>
+}
+
+export function expose(port: number, options?: ExposeOptions): Promise<ExposedTunnel>
+```
+
+Basic usage:
+
 ```ts
 const tunnel = await expose(3000)
 tunnel.url   // https://abc123.trycloudflare.com
 await tunnel.close()
+```
 
+Recommended explicit usage:
+
+```ts
 const tunnel = await expose(63315, {
   host: "127.0.0.1",
   timeoutMs: 45_000,
@@ -124,18 +183,81 @@ const tunnel = await expose(63315, {
 })
 ```
 
-Options:
+With explicit resource management:
+
+```ts
+await using tunnel = await expose(3000)
+console.log(tunnel.url)
+```
+
+With log forwarding:
+
+```ts
+const tunnel = await expose(3000, {
+  logTo: process.stderr,
+})
+```
+
+Option reference:
 
 - `host`: local host/IP to expose. Defaults to `127.0.0.1`.
 - `timeoutMs`: startup readiness timeout. Defaults to `45_000`.
 - `waitForRegisteredConnection`: wait for a registered edge connection before resolving. Defaults to `true`.
 - `logTo`: writable stream that receives raw `cloudflared` stdout/stderr chunks.
 
-Returns an `ExposedTunnel` with `url`, `close()`, and `[Symbol.asyncDispose]()`.
+Runtime behavior:
+
+- Spawns `cloudflared tunnel --url http://${host}:${port} --no-autoupdate`.
+- Resolves only after a `https://*.trycloudflare.com` URL is seen and, by default, `cloudflared` reports `Registered tunnel connection`.
+- Rejects with a `TunnelProcessError` when readiness does not happen before `timeoutMs`.
+- Kills the `cloudflared` child process when startup fails, `close()` is called, `[Symbol.asyncDispose]()` runs, or the owning Effect scope closes.
+- `close()` is idempotent, so callers can safely close from multiple shutdown hooks.
+- The generated URL is returned only on the handle. The core SDK does not mutate `process.env`; the Vite plugin owns optional env publishing.
 
 ### `viteTunnel(options?)`
 
 Starts an anonymous quick tunnel for a Vite dev server and closes it with the server lifecycle.
+
+Public API:
+
+```ts
+import { viteTunnel } from "tunnels/vite"
+import type { ExposeOptions, ExposedTunnel } from "tunnels"
+import type {
+  ViteTunnelOptions,
+  ViteTunnelPortContext,
+  ViteTunnelReadyContext,
+  ViteTunnelCloseContext,
+  ViteTunnelDevServer,
+  ViteTunnelPlugin,
+} from "tunnels/vite"
+
+export interface ViteTunnelOptions extends ExposeOptions {
+  enabled?: boolean
+  autoStart?: boolean
+  port?: number | ((context: ViteTunnelPortContext) => number | Promise<number>)
+  env?: string | readonly string[] | false
+  existingOrigin?: string
+  onReady?: (context: ViteTunnelReadyContext) => void | Promise<void>
+  onClose?: (context: ViteTunnelCloseContext) => void | Promise<void>
+}
+
+export interface ViteTunnelReadyContext {
+  readonly url: string
+  readonly tunnel?: ExposedTunnel
+  readonly server: ViteTunnelDevServer
+}
+
+export interface ViteTunnelCloseContext {
+  readonly url: string
+  readonly tunnel: ExposedTunnel
+  readonly server: ViteTunnelDevServer
+}
+
+export function viteTunnel(options?: ViteTunnelOptions): ViteTunnelPlugin
+```
+
+Basic usage:
 
 ```ts
 import { viteTunnel } from "tunnels/vite"
@@ -151,7 +273,37 @@ viteTunnel({
 })
 ```
 
-Options extend `ExposeOptions` and add:
+Use an existing origin instead of starting a new tunnel:
+
+```ts
+viteTunnel({
+  existingOrigin: process.env.PUBLIC_DEV_SERVER_URL,
+  env: "PUBLIC_DEV_SERVER_URL",
+  onReady: ({ url, tunnel }) => {
+    console.log(`Using ${url}`)
+    console.log(tunnel) // undefined when existingOrigin is used
+  },
+})
+```
+
+Resolve the port from the Vite server:
+
+```ts
+viteTunnel({
+  port: ({ server }) => server.config.server.port ?? 63315,
+})
+```
+
+Publish to multiple consumers:
+
+```ts
+viteTunnel({
+  port: 63315,
+  env: ["PUBLIC_DEV_SERVER_URL", "VITEST_BROWSER_PUBLIC_ORIGIN"],
+})
+```
+
+Option reference:
 
 - `enabled`: set `false` to no-op.
 - `autoStart`: set `false` to prevent starting a tunnel. Defaults to `true`.
@@ -160,6 +312,23 @@ Options extend `ExposeOptions` and add:
 - `existingOrigin`: publish and report an already-known origin instead of starting a tunnel.
 - `onReady`: callback after a URL is available.
 - `onClose`: callback after a started tunnel is closed.
+
+Lifecycle behavior:
+
+- Runs only for Vite serve mode through a structural plugin shape; `vite` is not a runtime dependency.
+- In `configureServer`, no-ops immediately when `enabled === false`.
+- If `existingOrigin` is provided, publishes that URL to `env`, calls `onReady({ url, server })`, and does not call `expose()`.
+- If `autoStart === false`, does not start a tunnel.
+- Resolves the port from `options.port`, a port callback, or `server.config.server.port`.
+- Starts `expose(port, exposeOptions)` with all shared `ExposeOptions`, including `host`, `timeoutMs`, `waitForRegisteredConnection`, and `logTo`.
+- Publishes `tunnel.url` to each configured env var before calling `onReady`.
+- Closes the tunnel when Vite's HTTP server emits `close` and again from `closeBundle`; duplicate close attempts are safe.
+
+When to use this plugin:
+
+- Use it when another tool needs the generated public URL as an env var or callback during Vite startup.
+- Use it when your test runner or remote browser needs to hit a local dev server through a public origin.
+- Prefer Cloudflare's official Vite plugin if you only need its local dev tunnel behavior and do not need this SDK's programmatic URL/callback/env surface.
 
 ### `TunnelClient`
 
